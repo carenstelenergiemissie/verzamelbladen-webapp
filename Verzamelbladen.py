@@ -1130,7 +1130,7 @@ from reportlab.lib import colors
 # PDF: exporteer eerste tabblad
 # ===============================================
 def excel_first_sheet_to_pdf(excel_path: str, pdf_path: str):
-    df = pd.read_excel(excel_path, sheet_name=0)
+    df = pd.read_excel(excel_path, sheet_name="Verzamelblad")
     pdf = SimpleDocTemplate(pdf_path, pagesize=landscape(A4), leftMargin=20, rightMargin=20)
     data = [df.columns.tolist()] + df.values.tolist()
     table = Table(data)
@@ -1188,7 +1188,6 @@ h1, h2, h3 {
 # Header
 # ===============================================
 st.markdown("<h1>⚡ Verzamelbestand Generator – Energiebeheer</h1>", unsafe_allow_html=True)
-st.write("Professionele webapp voor het verwerken van energiefacturatie.")
 
 
 # ===============================================
