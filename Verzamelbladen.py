@@ -175,7 +175,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Leveranciers
+# LEVERANCIERS 
 SUPPLIERS = {
     "kenter": {
         "naam": "Kenter",
@@ -204,14 +204,17 @@ SUPPLIERS = {
     "vitens": {
         "naam": "Vitens",
         "tabnaam": "NL94INGB0000869000_D",
-        #"tabnaam_credit": "NL94INGB0000869000_C",
+       # "tabnaam_credit": "NL94INGB0000869000_C",
         "color": "#A8E6CF"
     }
 }
 
 
-# Random factuur selecteren per leverancier
+# =====================================================================
+# FUNCTIE OM RANDOM FACTUUR TE KRIJGEN
+# =====================================================================
 def get_random_invoice(bronbestand_bytes, tabnaam):
+    """Haal een random factuurnummer op uit het bronbestand voor referentie"""
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
             tmp.write(bronbestand_bytes)
@@ -236,7 +239,6 @@ def get_random_invoice(bronbestand_bytes, tabnaam):
                 pass
     except:
         return None
-
 
 def process_supplier(
     bronbestand_bytes,
@@ -395,7 +397,7 @@ def process_supplier(
         wb_check.close()
         df_spec_new = pd.DataFrame(rows_new, columns=df_data.columns)
         
-        # Totalen checken
+        # Totalen
         kol_excl = df_data.columns.get_loc("Excl. BTW")
         kol_btw = df_data.columns.get_loc("BTW")
         kol_incl = df_data.columns.get_loc("Incl. BTW")
@@ -520,6 +522,7 @@ def process_supplier(
             "is_credit": is_credit_sheet
         }
 
+
 def main():
     # Header
     st.markdown("""
@@ -531,7 +534,6 @@ def main():
     
     # Sidebar met info
     with st.sidebar:
-        st.image("https://via.placeholder.com/200x80/667eea/ffffff?text=Energiemissie", use_container_width=True)
         st.markdown("---")
         st.markdown("### 📋 Instructies")
         st.markdown("""
@@ -628,7 +630,7 @@ def main():
                             st.markdown(f"⚪ {supplier['naam']}")
                 
                 if has_credits:
-                    st.info("💡 Credit facturen gevonden!")
+                    st.info("💡 Credit facturen gevonden! Upload credit templates in de Configuratie tab.")
                 
             except Exception as e:
                 st.error(f"Fout bij het lezen van het bestand: {e}")
@@ -650,7 +652,9 @@ def main():
         else:
             klanten = [
                 "Provincie Noord-Holland",
-                "GGZ Centraal"
+                "GGZ Centraal",
+                "Gemeente Amsterdam",
+                "Trenton"
             ]
             
             selected_klant = st.selectbox(
