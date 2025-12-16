@@ -180,13 +180,13 @@ SUPPLIERS = {
     "kenter": {
         "naam": "Kenter",
         "tabnaam": "NL59INGB0006779355_D",
-        #"tabnaam_credit": "NL59INGB0006779355_C",
+        "tabnaam_credit": "NL59INGB0006779355_C",
         "color": "#FF6B6B"
     },
     "liander": {
         "naam": "Liander",
         "tabnaam": "NL95INGB0000005585_D",
-        #"tabnaam_credit": "NL95INGB0000005585_C",
+        "tabnaam_credit": "NL95INGB0000005585_C",
         "color": "#4ECDC4"
     },
     "vattenfall": {
@@ -204,7 +204,7 @@ SUPPLIERS = {
     "vitens": {
         "naam": "Vitens",
         "tabnaam": "NL94INGB0000869000_D",
-       # "tabnaam_credit": "NL94INGB0000869000_C",
+        "tabnaam_credit": "NL94INGB0000869000_C",
         "color": "#A8E6CF"
     }
 }
@@ -653,8 +653,6 @@ def main():
             klanten = [
                 "Provincie Noord-Holland",
                 "GGZ Centraal",
-                "Gemeente Amsterdam",
-                "Trenton"
             ]
             
             selected_klant = st.selectbox(
