@@ -1484,7 +1484,7 @@ def main():
     st.markdown("""
         <div class="main-header">
             <h1>⚡ Betaalbestanden Generator</h1>
-            <p>Energiemissie - Automatische verwerking voor iedereen</p>
+            <p>Energiemissie</p>
         </div>
     """, unsafe_allow_html=True)
 
