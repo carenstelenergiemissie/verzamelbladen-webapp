@@ -17,7 +17,7 @@ import zipfile
 
 # Pagina configuratie
 st.set_page_config(
-    page_title="Betaalbestanden Generatore",
+    page_title="Betaalbestanden Generator - Energiemissie",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -102,7 +102,7 @@ SUPPLIERS = {
     "kenter": {
         "naam": "Kenter",
         "tabnaam": "NL59INGB0006779355_D",
-        "tabnaam_credit": "NL59INGB0006779355_D",  
+        "tabnaam_credit": "NL59INGB0006779355_D",  # Zelfde tab, gefilterd op kolom N
         "color": "#FF6B6B"
     },
     "liander": {
@@ -131,13 +131,15 @@ SUPPLIERS = {
     }
 }
 
+# KLANT -> leveranciers mapping (afgedwongen)
 CUSTOMER_SUPPLIERS = {
     "Provincie Noord-Holland": ["vattenfall", "kenter", "liander"],
     "GGZ Centraal": ["eneco", "vitens"]
 }
 
+# =====================================================================
 # FUNCTIE OM RANDOM FACTUUR TE KRIJGEN
-
+# =====================================================================
 def get_random_invoice(bronbestand_bytes, tabnaam):
     """Haal een random factuurnummer op uit het bronbestand voor referentie"""
     try:
@@ -164,14 +166,15 @@ def get_random_invoice(bronbestand_bytes, tabnaam):
     except Exception:
         return None
 
-CREDIT_TYPES = ["credit", "correctie"] 
-DEBET_TYPE = "debet"  
+CREDIT_TYPES = ["credit", "correctie"]  # Deze gaan naar credit Betaalbestanden
+DEBET_TYPE = "debet"  # Deze gaan naar debet Betaalbestanden
 
 # Template opslag directory
 TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "saved_templates")
 os.makedirs(TEMPLATE_DIR, exist_ok=True)
 
 def save_template_to_disk(customer_name, supplier_key, template_bytes, filename, is_credit=False):
+    """Sla een template op naar disk voor permanent gebruik - NU KLANT-SPECIFIEK"""
     template_type = "credit" if is_credit else "debet"
     safe_customer = customer_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
     
@@ -197,6 +200,7 @@ def save_template_to_disk(customer_name, supplier_key, template_bytes, filename,
         return False
 
 def load_template_from_disk(customer_name, supplier_key, is_credit=False):
+    """Laad een opgeslagen template van disk - NU KLANT-SPECIFIEK"""
     template_type = "credit" if is_credit else "debet"
     safe_customer = customer_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
     template_path = os.path.join(TEMPLATE_DIR, f"{safe_customer}_{supplier_key}_{template_type}.xlsx")
@@ -217,6 +221,7 @@ def load_template_from_disk(customer_name, supplier_key, is_credit=False):
     return None, None
 
 def delete_template_from_disk(customer_name, supplier_key, is_credit=False):
+    """Verwijder een opgeslagen template van disk - NU KLANT-SPECIFIEK"""
     template_type = "credit" if is_credit else "debet"
     safe_customer = customer_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
     template_path = os.path.join(TEMPLATE_DIR, f"{safe_customer}_{supplier_key}_{template_type}.xlsx")
@@ -236,6 +241,7 @@ def delete_template_from_disk(customer_name, supplier_key, is_credit=False):
         return False
 
 def list_saved_templates(customer_name=None):
+    """Haal een lijst op van alle opgeslagen templates (optioneel gefilterd op klant)"""
     templates = []
     try:
         if not os.path.exists(TEMPLATE_DIR):
@@ -275,11 +281,11 @@ def has_credit_or_correctie_rows(bronbestand_bytes, tabnaam):
             df_data = df_raw[1:].copy()
             df_data.columns = df_headers
             
-            # Check kolom N 
+            # Check kolom N (14e kolom, 0-indexed = 13)
             if len(df_data.columns) < 14:
                 return False
             
-            kolom_n = df_data.iloc[:, 13]  
+            kolom_n = df_data.iloc[:, 13]  # Kolom N is index 13 (A=0, B=1, ..., N=13)
             
             # Check of er credit/correctie waarden zijn
             mask = kolom_n.astype(str).str.lower().str.contains('credit|correctie', na=False, regex=True)
@@ -314,9 +320,6 @@ def split_credit_correctie(df):
     # Check welke regels credit/correctie zijn (case-insensitive)
     # Alles wat "credit" of "correctie" bevat gaat naar credit Betaalbestanden
     mask = kolom_n.astype(str).str.lower().str.contains('credit|correctie', na=False, regex=True)
-    
-    # Debet = alles ZONDER "credit" of "correctie" (dus inclusief "Debet" waarden)
-    # Credit = alles MET "credit" of "correctie"
     return df[~mask].copy(), df[mask].copy()
 
 
@@ -413,13 +416,14 @@ def process_supplier(
         wb = load_workbook(tpl_path)
         ws_spec = wb["Specificatie"]
 
-        # Verwijder oude data 
+        # Verwijder oude data (behoud header)
         last = 1
         while ws_spec.cell(last + 1, 1).value not in (None, ""):
             last += 1
         if last > 1:
             ws_spec.delete_rows(2, last - 1)
 
+        # FIX: Kopieer data in volgorde - kopieer alle kolommen zoals ze zijn
         for row_idx, row_data in enumerate(df_data.itertuples(index=False), start=2):
             for col_idx, value in enumerate(row_data, start=1):
                 ws_spec.cell(row_idx, col_idx, value)
@@ -629,9 +633,9 @@ def process_supplier(
             "is_credit": is_credit_sheet
         }
 
-
+# =====================================================
 # Euromaster SEFE verwerking
-
+# =====================================================
 def init_validation_report():
     return {"correcties": [], "waarschuwingen": [], "fouten": []}
 
@@ -797,6 +801,9 @@ def preprocess_euromaster_sefe(csv_bytes):
     return None, report, False
 
 
+# =====================================================
+# Helper: per klant state in session_state
+# =====================================================
 def get_customer_state(customer_name):
     if "customer_states" not in st.session_state:
         st.session_state.customer_states = {}
@@ -860,9 +867,9 @@ def render_standard_customer_flow(customer_name, allowed_supplier_keys):
         st.markdown("### 📋 Instructies")
         st.markdown("""
         1. **Tab 1**: Upload bronbestand
-        2. **Tab 2**: Upload templates die nog niet zijn opgeslagen
+        2. **Tab 2**: Upload templates die nog niet eerder zijn gebruikt
         3. **Tab 3**: Configureer periode
-        4. **Tab 4**: Start verwerking & download resultaten
+        4. **Tab 4**: Start verwerking & Download resultaten
         """)
         st.markdown("---")
         st.markdown("### 💾 Opgeslagen Templates")
@@ -881,6 +888,22 @@ def render_standard_customer_flow(customer_name, allowed_supplier_keys):
             st.info("Nog geen templates opgeslagen")
         
         st.markdown("---")
+        
+        # Check of pywin32 beschikbaar is
+        st.markdown("---")
+        st.markdown("### 📄 PDF Generatie")
+        try:
+            import win32com.client
+            st.success("✅ Excel beschikbaar - PDF's worden gegenereerd")
+        except ImportError:
+            st.warning("⚠️ PDF generatie niet beschikbaar")
+            st.markdown("""
+            **Installeer pywin32:**
+            ```
+            pip install pywin32
+            ```
+            Zie `PDF_INSTALLATIE.md` voor details.
+            """)
 
     tab1, tab2, tab3, tab4 = st.tabs(["📁 Upload", "📋 Templates", "⚙️ Configuratie", "🚀 Verwerken & Resultaten"])
 
@@ -1071,11 +1094,12 @@ def render_standard_customer_flow(customer_name, allowed_supplier_keys):
                                 st.error("Kon template niet opslaan")
         
         st.markdown("---")
+        st.info("💡 Tip: Upload alle templates hier één keer. Ze worden permanent opgeslagen en automatisch gebruikt in de Configuratie tab!")
 
     # TAB 3: Configuratie
     with tab3:
         st.markdown("## ⚙️ Configureer leveranciers")
-        st.info("💡 Templates worden automatisch geladen. Mochten er nog templates missen, voeg die hier dan toe.")
+        st.info("💡 Templates worden automatisch geladen vanuit Tab 2 (Templates). Je hoeft ze hier niet meer te uploaden! Mocht je nieuwe templates willen toevoegen, doe dit in Tab 2. ")
         
         if not state["bronbestand"]:
             st.warning("⚠️ Upload eerst een bronbestand in de Upload tab")
@@ -1460,7 +1484,7 @@ def main():
     st.markdown("""
         <div class="main-header">
             <h1>⚡ Betaalbestanden Generator</h1>
-            <p>Energiemissie</p>
+            <p>Energiemissie - Automatische verwerking voor iedereen</p>
         </div>
     """, unsafe_allow_html=True)
 
