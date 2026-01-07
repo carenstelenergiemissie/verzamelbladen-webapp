@@ -1,4 +1,3 @@
-
 """
 Betaalbestanden Generator
 """
@@ -108,7 +107,7 @@ SUPPLIERS = {
     "liander": {
         "naam": "Liander",
         "tabnaam": "NL95INGB0000005585_D",
-        "tabnaam_credit": "NL95INGB0000005585_C",
+        "tabnaam_credit": "NL95INGB0000005585_D",  # Zelfde tab als debet, gefilterd op kolom N
         "color": "#4ECDC4"
     },
     "vattenfall": {
@@ -128,14 +127,37 @@ SUPPLIERS = {
         "tabnaam": "NL94INGB0000869000_D",
         "tabnaam_credit": "NL94INGB0000869000_C",
         "color": "#A8E6CF"
+    },
+    "stedin": {
+        "naam": "Stedin",
+        "tabnaam": "NL50ABNA0644532068_D",
+        "tabnaam_credit": "NL50ABNA0644532068_C",
+        "color": "#FF9F1C"
+    },
+    "engie": {
+        "naam": "ENGIE Energie Nederland",
+        "tabnaam": "NL16INGB0692115102_D",
+        "tabnaam_credit": "NL16INGB0692115102_C",
+        "color": "#2EC4B6"
+    },
+    "westland": {
+        "naam": "Westland Infra",
+        "tabnaam": "NL11RABO0127788239_D",
+        "tabnaam_credit": "NL11RABO0127788239_D",  # Zelfde tab als debet, gefilterd op kolom N
+        "color": "#CBF3F0"
     }
 }
 
 # KLANT -> leveranciers mapping (afgedwongen)
 CUSTOMER_SUPPLIERS = {
     "Provincie Noord-Holland": ["vattenfall", "kenter", "liander"],
-    "GGZ Centraal": ["eneco", "vitens"]
+    "GGZ Centraal": ["eneco", "vitens"],
+    "HTM": ["stedin", "engie", "westland"]
 }
+
+# Leveranciers die ALLE facturen (debet + credit) in HETZELFDE verzamelbestand verwerken
+# Voor deze leveranciers wordt GEEN aparte credit verwerking uitgevoerd
+NO_SEPARATE_CREDIT_PROCESSING = ["westland"]
 
 # =====================================================================
 # FUNCTIE OM RANDOM FACTUUR TE KRIJGEN
@@ -388,16 +410,22 @@ def process_supplier(
         df_data_all = df_raw[1:].copy()
         df_data_all.columns = df_headers
 
-        # Split credit/correctie van debet regels
-        df_debet, df_credit = split_credit_correctie(df_data_all)
-
-        # Kies de juiste data op basis van is_credit_sheet
-        if is_credit_sheet:
-            df_data = df_credit
-            type_label = "credit/correctie"
+        # Voor leveranciers zonder aparte credit processing (zoals Westland):
+        # Gebruik ALLE data (debet + credit samen) in het debet verzamelbestand
+        if supplier_key in NO_SEPARATE_CREDIT_PROCESSING:
+            df_data = df_data_all  # ALLE facturen samen
+            type_label = "alle facturen (debet + credit)"
         else:
-            df_data = df_debet
-            type_label = "debet"
+            # Split credit/correctie van debet regels voor andere leveranciers
+            df_debet, df_credit = split_credit_correctie(df_data_all)
+
+            # Kies de juiste data op basis van is_credit_sheet
+            if is_credit_sheet:
+                df_data = df_credit
+                type_label = "credit/correctie"
+            else:
+                df_data = df_debet
+                type_label = "debet"
 
         if len(df_data) == 0:
             try:
@@ -417,7 +445,30 @@ def process_supplier(
             }
 
         wb = load_workbook(tpl_path)
-        ws_spec = wb["Specificatie"]
+        
+        # Probeer beide mogelijke namen voor het specificatie tabblad
+        if "Specificatie" in wb.sheetnames:
+            ws_spec = wb["Specificatie"]
+            spec_tab_name = "Specificatie"
+        elif "Factuur specificatie" in wb.sheetnames:
+            ws_spec = wb["Factuur specificatie"]
+            spec_tab_name = "Factuur specificatie"
+        else:
+            wb.close()
+            try:
+                if bron_path and os.path.exists(bron_path):
+                    os.unlink(bron_path)
+                if tpl_path and os.path.exists(tpl_path):
+                    os.unlink(tpl_path)
+            except Exception:
+                pass
+            
+            return {
+                "success": False,
+                "message": "Template mist 'Specificatie' of 'Factuur specificatie' tab",
+                "supplier": SUPPLIERS[supplier_key]["naam"],
+                "is_credit": is_credit_sheet
+            }
 
         # Verwijder oude data (behoud header)
         last = 1
@@ -434,7 +485,7 @@ def process_supplier(
         ws_verz = wb["Verzamelblad"]
         ws_verz["B4"].value = datum_tekst
 
-        if supplier_key in ("kenter", "liander", "vattenfall"):
+        if supplier_key in ("kenter", "liander", "vattenfall", "stedin", "engie", "westland"):
             ws_verz["C24"].value = f"{supplier_key.capitalize()}_{datum_excel}"
         else:
             old = ws_verz["C24"].value
@@ -469,7 +520,20 @@ def process_supplier(
         excel_bytes = output.read()
 
         wb_check = load_workbook(BytesIO(excel_bytes))
-        ws_new = wb_check["Specificatie"]
+        
+        # Probeer beide mogelijke namen voor het specificatie tabblad
+        if "Specificatie" in wb_check.sheetnames:
+            ws_new = wb_check["Specificatie"]
+        elif "Factuur specificatie" in wb_check.sheetnames:
+            ws_new = wb_check["Factuur specificatie"]
+        else:
+            wb_check.close()
+            return {
+                "success": False,
+                "message": "Verwerkt bestand mist 'Specificatie' of 'Factuur specificatie' tab",
+                "supplier": SUPPLIERS[supplier_key]["naam"],
+                "is_credit": is_credit_sheet
+            }
 
         rows_new = []
         r = 2
@@ -480,6 +544,13 @@ def process_supplier(
 
         wb_check.close()
         df_spec_new = pd.DataFrame(rows_new, columns=df_data.columns)
+
+        # Check voor dubbele factuurnummers in kolom C (3e kolom, index 2)
+        factuurnummers = df_spec_new.iloc[:, 2].astype(str)
+        duplicates = factuurnummers[factuurnummers.duplicated()].unique()
+        
+        heeft_duplicaten = len(duplicates) > 0
+        duplicaten_lijst = list(duplicates) if heeft_duplicaten else []
 
         kol_excl = df_data.columns.get_loc("Excl. BTW")
         kol_btw = df_data.columns.get_loc("BTW")
@@ -498,6 +569,9 @@ def process_supplier(
             abs(sum_btw_bron - sum_btw_new) < 0.01 and
             abs(sum_incl_bron - sum_incl_new) < 0.01
         )
+        
+        # Validatie slaagt alleen als bedragen kloppen EN geen duplicaten
+        validatie_geslaagd = bedragen_kloppen and not heeft_duplicaten
 
         try:
             if bron_path and os.path.exists(bron_path):
@@ -514,7 +588,7 @@ def process_supplier(
         pdf_bytes = None
         pdf_filename = None
 
-        if bedragen_kloppen:
+        if validatie_geslaagd:
             try:
                 import win32com.client as win32
                 import pythoncom
@@ -599,9 +673,19 @@ def process_supplier(
                 import traceback
                 print(traceback.format_exc())
 
+        # Maak een duidelijk bericht over de validatie status
+        if validatie_geslaagd:
+            message = "Bedragen kloppen ✓ en geen dubbele facturen"
+        elif not bedragen_kloppen and heeft_duplicaten:
+            message = "Bedragen kloppen NIET ✗ en dubbele facturen gevonden"
+        elif not bedragen_kloppen:
+            message = "Bedragen kloppen NIET ✗"
+        else:  # heeft_duplicaten
+            message = "Bedragen kloppen ✓ maar dubbele facturen gevonden"
+        
         return {
-            "success": bedragen_kloppen,
-            "message": "Bedragen kloppen ✓" if bedragen_kloppen else "Bedragen kloppen NIET ✗",
+            "success": validatie_geslaagd,
+            "message": message,
             "supplier": SUPPLIERS[supplier_key]["naam"],
             "excl": sum_excl_new,
             "btw": sum_btw_new,
@@ -613,7 +697,10 @@ def process_supplier(
             "filename": output_filename,
             "pdf_bytes": pdf_bytes,
             "pdf_filename": pdf_filename,
-            "is_credit": is_credit_sheet
+            "is_credit": is_credit_sheet,
+            "heeft_duplicaten": heeft_duplicaten,
+            "duplicaten_lijst": duplicaten_lijst,
+            "bedragen_kloppen": bedragen_kloppen
         }
 
     except Exception as e:
@@ -825,7 +912,7 @@ def get_customer_state(customer_name):
     return st.session_state.customer_states[customer_name]
 
 # =====================================================
-# UI: standaard flow voor Provincie Noord-Holland en GGZ Centraal
+# UI: standaard flow voor alle klanten
 # =====================================================
 def render_standard_customer_flow(customer_name, allowed_supplier_keys):
     state = get_customer_state(customer_name)
@@ -981,18 +1068,29 @@ def render_standard_customer_flow(customer_name, allowed_supplier_keys):
                         if supplier["tabnaam"] in sheets:
                             has_credit_rows = has_credit_or_correctie_rows(state["bronbestand"], supplier["tabnaam"])
                         
-                        if has_credit_tab or has_credit_rows:
-                            if has_credit_tab and has_credit_rows:
-                                st.markdown(f"✅ **{supplier['naam']}** (tab + regels)")
-                            elif has_credit_tab:
-                                st.markdown(f"✅ **{supplier['naam']}** (tab)")
+                        # Voor leveranciers die geen aparte credit processing doen (zoals Westland):
+                        # Credit wordt WEL gedetecteerd maar NIET als aparte verwerking
+                        if key in NO_SEPARATE_CREDIT_PROCESSING:
+                            if has_credit_rows:
+                                st.markdown(f"ℹ️ **{supplier['naam']}** (samen met debet)")
+                                # NIET markeren als credit voor aparte verwerking
+                                state["supplier_settings"][key]["credit"] = False
                             else:
-                                st.markdown(f"✅ **{supplier['naam']}** (regels)")
-                            
-                            state["supplier_settings"][key]["credit"] = True
-                            has_credits = True
+                                st.markdown(f"⚪ {supplier['naam']}")
                         else:
-                            st.markdown(f"⚪ {supplier['naam']}")
+                            # Normale leveranciers met aparte credit verwerking
+                            if has_credit_tab or has_credit_rows:
+                                if has_credit_tab and has_credit_rows:
+                                    st.markdown(f"✅ **{supplier['naam']}** (tab + regels)")
+                                elif has_credit_tab:
+                                    st.markdown(f"✅ **{supplier['naam']}** (tab)")
+                                else:
+                                    st.markdown(f"✅ **{supplier['naam']}** (regels)")
+                                
+                                state["supplier_settings"][key]["credit"] = True
+                                has_credits = True
+                            else:
+                                st.markdown(f"⚪ {supplier['naam']}")
 
                 if has_credits:
                     st.info("💡 Credit/Correctie facturen gevonden. Upload credit templates in de Configuratie tab.")
@@ -1061,42 +1159,49 @@ def render_standard_customer_flow(customer_name, allowed_supplier_keys):
                                 st.error("Kon template niet opslaan")
                 
                 # CREDIT TEMPLATE
-                with col2:
-                    st.markdown("### 💳 Credit Template")
-                    
-                    # Check of er al een opgeslagen credit template is
-                    saved_credit_bytes, saved_credit_filename = load_template_from_disk(customer_name, supplier_key, is_credit=True)
-                    
-                    if saved_credit_bytes and saved_credit_filename:
-                        st.success(f"✅ Opgeslagen: {saved_credit_filename}")
+                # Alleen tonen voor leveranciers die aparte credit processing hebben
+                if supplier_key not in NO_SEPARATE_CREDIT_PROCESSING:
+                    with col2:
+                        st.markdown("### 💳 Credit Template")
                         
-                        if st.button("🗑️ Verwijder credit template", key=f"tmpl_del_credit_{customer_name}_{supplier_key}"):
-                            if delete_template_from_disk(customer_name, supplier_key, is_credit=True):
-                                st.success("Template verwijderd!")
-                                st.rerun()
-                    else:
-                        st.info("Nog geen credit template opgeslagen")
-                    
-                    # Upload nieuwe credit template
-                    credit_upload = st.file_uploader(
-                        "Upload credit template",
-                        type=["xlsx"],
-                        key=f"tmpl_upload_credit_{customer_name}_{supplier_key}"
-                    )
-                    
-                    if credit_upload:
-                        # Check of dit een nieuw bestand is (niet al verwerkt)
-                        upload_key = f"processed_credit_{customer_name}_{supplier_key}_{credit_upload.name}"
+                        # Check of er al een opgeslagen credit template is
+                        saved_credit_bytes, saved_credit_filename = load_template_from_disk(customer_name, supplier_key, is_credit=True)
                         
-                        if upload_key not in st.session_state:
-                            credit_bytes = credit_upload.read()
-                            if save_template_to_disk(customer_name, supplier_key, credit_bytes, credit_upload.name, is_credit=True):
-                                st.success(f"✅ Template opgeslagen: {credit_upload.name}")
-                                st.session_state[upload_key] = True
-                                time.sleep(1)
-                                st.rerun()
-                            else:
-                                st.error("Kon template niet opslaan")
+                        if saved_credit_bytes and saved_credit_filename:
+                            st.success(f"✅ Opgeslagen: {saved_credit_filename}")
+                            
+                            if st.button("🗑️ Verwijder credit template", key=f"tmpl_del_credit_{customer_name}_{supplier_key}"):
+                                if delete_template_from_disk(customer_name, supplier_key, is_credit=True):
+                                    st.success("Template verwijderd!")
+                                    st.rerun()
+                        else:
+                            st.info("Nog geen credit template opgeslagen")
+                        
+                        # Upload nieuwe credit template
+                        credit_upload = st.file_uploader(
+                            "Upload credit template",
+                            type=["xlsx"],
+                            key=f"tmpl_upload_credit_{customer_name}_{supplier_key}"
+                        )
+                        
+                        if credit_upload:
+                            # Check of dit een nieuw bestand is (niet al verwerkt)
+                            upload_key = f"processed_credit_{customer_name}_{supplier_key}_{credit_upload.name}"
+                            
+                            if upload_key not in st.session_state:
+                                credit_bytes = credit_upload.read()
+                                if save_template_to_disk(customer_name, supplier_key, credit_bytes, credit_upload.name, is_credit=True):
+                                    st.success(f"✅ Template opgeslagen: {credit_upload.name}")
+                                    st.session_state[upload_key] = True
+                                    time.sleep(1)
+                                    st.rerun()
+                                else:
+                                    st.error("Kon template niet opslaan")
+                else:
+                    # Voor leveranciers zoals Westland die alles in 1 verzamelbestand doen
+                    with col2:
+                        st.markdown("### 💳 Credit Template")
+                        st.info("ℹ️ Niet nodig - Debet template wordt gebruikt voor alle facturen")
         
         st.markdown("---")
         st.info("💡 Tip: Upload alle templates hier één keer. Ze worden permanent opgeslagen en automatisch gebruikt in de Configuratie tab!")
@@ -1288,6 +1393,13 @@ def render_standard_customer_flow(customer_name, allowed_supplier_keys):
                             <p style="margin:0.5rem 0 0 0;">{result['message']}</p>
                         </div>
                         """, unsafe_allow_html=True)
+
+                        # Toon dubbele facturen indien aanwezig
+                        if result.get("heeft_duplicaten") and result.get("duplicaten_lijst"):
+                            st.markdown("**⚠️ Dubbele factuurnummers gevonden:**")
+                            duplicaten_str = ", ".join(str(d) for d in result["duplicaten_lijst"])
+                            st.error(f"Kolom C bevat dubbele facturen: {duplicaten_str}")
+                            st.markdown("**Actie vereist:** Controleer het bronbestand en verwijder dubbele facturen.")
 
                         if "excl" in result:
                             st.markdown("**Vergelijking bedragen:**")
@@ -1494,7 +1606,7 @@ def main():
     """, unsafe_allow_html=True)
 
     # Klant tabs
-    tab_pnh, tab_ggz, tab_euro = st.tabs(["Provincie Noord-Holland", "GGZ Centraal", "Euromaster"])
+    tab_pnh, tab_ggz, tab_htm, tab_euro = st.tabs(["Provincie Noord-Holland", "GGZ Centraal", "HTM", "Euromaster"])
 
     with tab_pnh:
         st.markdown("## Provincie Noord-Holland")
@@ -1503,6 +1615,10 @@ def main():
     with tab_ggz:
         st.markdown("## GGZ Centraal")
         render_standard_customer_flow("GGZ Centraal", CUSTOMER_SUPPLIERS["GGZ Centraal"])
+
+    with tab_htm:
+        st.markdown("## HTM")
+        render_standard_customer_flow("HTM", CUSTOMER_SUPPLIERS["HTM"])
 
     with tab_euro:
         st.markdown("## Euromaster SEFE")
