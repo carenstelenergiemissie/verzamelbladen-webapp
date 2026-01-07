@@ -166,8 +166,8 @@ def get_random_invoice(bronbestand_bytes, tabnaam):
     except Exception:
         return None
 
-CREDIT_TYPES = ["credit", "correctie"]  # Deze gaan naar credit Betaalbestanden
-DEBET_TYPE = "debet"  # Deze gaan naar debet Betaalbestanden
+CREDIT_TYPES = ["credit", "correctie"]  # Deze gaan naar credit verzamelblad
+DEBET_TYPE = "debet"  # Deze gaan naar debet verzamelblad
 
 # Template opslag directory
 TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "saved_templates")
@@ -305,9 +305,9 @@ def split_credit_correctie(df):
     Zoekt naar "Credit" of "Correctie" in kolom N (14e kolom)
     
     Kolom N waarden:
-    - "Debet" → gaat naar DEBET Betaalbestanden
-    - "Credit" → gaat naar CREDIT Betaalbestanden
-    - "Correctie" → gaat naar CREDIT Betaalbestanden
+    - "Debet" → gaat naar DEBET verzamelblad
+    - "Credit" → gaat naar CREDIT verzamelblad
+    - "Correctie" → gaat naar CREDIT verzamelblad
     """
     # Check of er minstens 14 kolommen zijn (kolom N = index 13)
     if len(df.columns) < 14:
@@ -318,8 +318,11 @@ def split_credit_correctie(df):
     kolom_n = df.iloc[:, 13]
     
     # Check welke regels credit/correctie zijn (case-insensitive)
-    # Alles wat "credit" of "correctie" bevat gaat naar credit Betaalbestanden
+    # Alles wat "credit" of "correctie" bevat gaat naar credit verzamelblad
     mask = kolom_n.astype(str).str.lower().str.contains('credit|correctie', na=False, regex=True)
+    
+    # Debet = alles ZONDER "credit" of "correctie" (dus inclusief "Debet" waarden)
+    # Credit = alles MET "credit" of "correctie"
     return df[~mask].copy(), df[mask].copy()
 
 
@@ -428,7 +431,7 @@ def process_supplier(
             for col_idx, value in enumerate(row_data, start=1):
                 ws_spec.cell(row_idx, col_idx, value)
 
-        ws_verz = wb["Betaalbestanden"]
+        ws_verz = wb["Verzamelblad"]
         ws_verz["B4"].value = datum_tekst
 
         if supplier_key in ("kenter", "liander", "vattenfall"):
@@ -540,8 +543,8 @@ def process_supplier(
                     wb_pdf = excel_app.Workbooks.Open(tmp_excel_path, ReadOnly=True)
                     print("Workbook opened")
                     
-                    print("Getting Betaalbestanden worksheet...")
-                    ws_pdf = wb_pdf.Worksheets("Betaalbestanden")
+                    print("Getting Verzamelblad worksheet...")
+                    ws_pdf = wb_pdf.Worksheets("Verzamelblad")
                     print("Worksheet found")
                     
                     print(f"Exporting to PDF: {pdf_temp_path}")
@@ -833,8 +836,8 @@ def render_standard_customer_flow(customer_name, allowed_supplier_keys):
         st.markdown("---")
         
         # Reset knop bovenaan
-        st.markdown("### 🔄 Nieuw Betaalbestanden")
-        if st.button("➕ Maak nieuw Betaalbestanden", type="primary", use_container_width=True, key=f"reset_{customer_name}"):
+        st.markdown("### 🔄 Nieuw Verzamelblad")
+        if st.button("➕ Maak nieuw verzamelblad", type="primary", use_container_width=True, key=f"reset_{customer_name}"):
             # Reset alle state voor deze klant
             if "customer_states" in st.session_state and customer_name in st.session_state.customer_states:
                 # Behoud alleen de templates
@@ -859,7 +862,7 @@ def render_standard_customer_flow(customer_name, allowed_supplier_keys):
                 if upload_key in st.session_state:
                     del st.session_state[upload_key]
                 
-                st.success("✅ Nieuw Betaalbestanden gestart!")
+                st.success("✅ Nieuw verzamelblad gestart!")
                 time.sleep(0.5)  # Korte delay voor de success message
                 st.rerun()
         
@@ -867,7 +870,7 @@ def render_standard_customer_flow(customer_name, allowed_supplier_keys):
         st.markdown("### 📋 Instructies")
         st.markdown("""
         1. **Tab 1**: Upload bronbestand
-        2. **Tab 2**: Upload templates die nog niet eerder zijn gebruikt
+        2. **Tab 2**: Upload templates (1x, worden opgeslagen!)
         3. **Tab 3**: Configureer periode
         4. **Tab 4**: Start verwerking & Download resultaten
         """)
@@ -888,6 +891,8 @@ def render_standard_customer_flow(customer_name, allowed_supplier_keys):
             st.info("Nog geen templates opgeslagen")
         
         st.markdown("---")
+        st.markdown("### ℹ️ Info")
+        st.info("Upload templates in Tab 2. Ze worden permanent opgeslagen en automatisch gebruikt!")
         
         # Check of pywin32 beschikbaar is
         st.markdown("---")
@@ -927,7 +932,7 @@ def render_standard_customer_flow(customer_name, allowed_supplier_keys):
             
             # Waarschuw als er al resultaten zijn
             if state["results"]:
-                st.warning("⚠️ Er zijn nog oude resultaten beschikbaar in Tab 4. Wil je opnieuw beginnen? Klik op '➕ Maak nieuw Betaalbestanden' in de sidebar.")
+                st.warning("⚠️ Er zijn nog oude resultaten beschikbaar in Tab 4. Wil je opnieuw beginnen? Klik op '➕ Maak nieuw verzamelblad' in de sidebar.")
 
             tmp_path = None
             try:
@@ -1099,7 +1104,7 @@ def render_standard_customer_flow(customer_name, allowed_supplier_keys):
     # TAB 3: Configuratie
     with tab3:
         st.markdown("## ⚙️ Configureer leveranciers")
-        st.info("💡 Templates worden automatisch geladen vanuit Tab 2 (Templates). Je hoeft ze hier niet meer te uploaden! Mocht je nieuwe templates willen toevoegen, doe dit in Tab 2. ")
+        st.info("💡 Templates worden automatisch geladen vanuit Tab 2 (Templates). Je hoeft ze hier niet meer te uploaden!")
         
         if not state["bronbestand"]:
             st.warning("⚠️ Upload eerst een bronbestand in de Upload tab")
@@ -1212,7 +1217,7 @@ def render_standard_customer_flow(customer_name, allowed_supplier_keys):
                 st.download_button(
                     "📦 DOWNLOAD ALLE BESTANDEN (ZIP)",
                     data=zip_buffer.getvalue(),
-                    file_name=f"{customer_name.replace(' ', '_')}_Betaalbestandenen_{dt.date.today().strftime('%Y%m%d')}.zip",
+                    file_name=f"{customer_name.replace(' ', '_')}_Verzamelbladen_{dt.date.today().strftime('%Y%m%d')}.zip",
                     mime="application/zip",
                     use_container_width=True,
                     key=f"{customer_name}_download_all_zip",
@@ -1483,7 +1488,7 @@ def render_euromaster_sefe():
 def main():
     st.markdown("""
         <div class="main-header">
-            <h1>⚡ Betaalbestanden Generator</h1>
+            <h1>⚡ Verzamelblad Generator</h1>
             <p>Energiemissie</p>
         </div>
     """, unsafe_allow_html=True)
